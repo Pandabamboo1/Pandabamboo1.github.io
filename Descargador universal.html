@@ -233,35 +233,23 @@
             to { transform: rotate(360deg); }
         }
 
-        .info-box {
-            background: #f8f9fa;
-            border-left: 4px solid #667eea;
-            padding: 15px;
-            border-radius: 5px;
-            margin-top: 20px;
+        .status-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
             font-size: 0.85em;
-            color: #666;
-        }
-
-        .info-box strong {
-            color: #333;
-        }
-
-        .config-box {
-            background: #fff3cd;
-            border: 1px solid #ffc107;
-            padding: 15px;
-            border-radius: 10px;
+            font-weight: 600;
             margin-bottom: 20px;
-            display: none;
         }
 
-        .config-box input {
-            width: 100%;
-            padding: 10px;
-            margin-top: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
+        .status-online {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-offline {
+            background: #f8d7da;
+            color: #721c24;
         }
 
         /* Responsive */
@@ -313,6 +301,12 @@
         <h1>🎬 Descargador Universal</h1>
         <p class="subtitle">Descarga videos y audio de tus plataformas favoritas</p>
 
+        <div style="text-align: center;">
+            <span class="status-badge status-online" id="statusBadge">
+                🟢 Servidor Conectado
+            </span>
+        </div>
+
         <div class="platforms">
             <span class="platform-badge">YouTube</span>
             <span class="platform-badge">TikTok</span>
@@ -321,12 +315,6 @@
             <span class="platform-badge">Twitter/X</span>
             <span class="platform-badge">Reddit</span>
             <span class="platform-badge">+1000 más</span>
-        </div>
-
-        <div class="config-box" id="configBox">
-            <strong>⚙️ Configuración del servidor</strong>
-            <input type="text" id="apiUrl" placeholder="https://universal-downloader-ra0f.onrender.com">
-            <button class="btn btn-primary" style="margin-top: 10px;" onclick="saveApiUrl()">Guardar</button>
         </div>
 
         <div id="alert" class="alert"></div>
@@ -345,7 +333,7 @@
                 </div>
                 <div class="radio-option">
                     <input type="radio" id="audio" name="type" value="audio">
-                    <label for="audio">Solo Audio (MP3)</label>
+                    <label for="audio">Solo Audio (M4A)</label>
                 </div>
             </div>
         </div>
@@ -372,43 +360,30 @@
                 <div class="progress-fill" id="progressFill">0%</div>
             </div>
         </div>
-
-        <div class="info-box">
-            <strong>💡 Guía de Instalación (Gratuito):</strong>
-            <ol style="margin-top: 10px; margin-left: 20px; line-height: 1.8;">
-                <li>Crea cuenta en <a href="https://render.com" target="_blank">Render.com</a></li>
-                <li>Sube el código Python a GitHub</li>
-                <li>Conecta tu repo en Render</li>
-                <li>Despliega como "Web Service"</li>
-                <li>Copia la URL y pégala arriba en "Configuración"</li>
-            </ol>
-            <button class="btn btn-primary" style="margin-top: 15px; font-size: 0.9em;" onclick="toggleConfig()">
-                ⚙️ Configurar Servidor
-            </button>
-        </div>
     </div>
 
     <script>
-        // URL del API (cambiar por tu URL de Render)
-        let API_URL = localStorage.getItem('apiUrl') || 'let API_URL = localStorage.getItem('apiUrl') || 'https://universal-downloader-ra0f.onrender.com';';
+        // URL del API - YA CONFIGURADA CON TU SERVIDOR
+        const API_URL = 'https://universal-downloader-ra0f.onrender.com';
 
-        function toggleConfig() {
-            const configBox = document.getElementById('configBox');
-            configBox.style.display = configBox.style.display === 'none' ? 'block' : 'none';
-            document.getElementById('apiUrl').value = API_URL;
-        }
-
-        function saveApiUrl() {
-            const url = document.getElementById('apiUrl').value.trim();
-            if (url) {
-                API_URL = url.endsWith('/') ? url.slice(0, -1) : url;
-                localStorage.setItem('apiUrl', API_URL);
-                showAlert('✅ URL del servidor guardada correctamente', 'success');
-                document.getElementById('configBox').style.display = 'none';
-            } else {
-                showAlert('❌ Por favor ingresa una URL válida', 'error');
+        // Verificar estado del servidor al cargar
+        async function checkServerStatus() {
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                if (response.ok) {
+                    document.getElementById('statusBadge').className = 'status-badge status-online';
+                    document.getElementById('statusBadge').textContent = '🟢 Servidor Conectado';
+                } else {
+                    throw new Error('Server offline');
+                }
+            } catch (error) {
+                document.getElementById('statusBadge').className = 'status-badge status-offline';
+                document.getElementById('statusBadge').textContent = '🔴 Servidor Despertando... (espera 30s)';
             }
         }
+
+        // Verificar al cargar la página
+        checkServerStatus();
 
         function showAlert(message, type) {
             const alert = document.getElementById('alert');
@@ -428,12 +403,6 @@
         }
 
         async function downloadMedia() {
-            if (!API_URL) {
-                showAlert('⚠️ Por favor configura la URL del servidor primero', 'error');
-                toggleConfig();
-                return;
-            }
-
             const url = document.getElementById('url').value.trim();
             const type = document.querySelector('input[name="type"]:checked').value;
             const quality = document.getElementById('quality').value;
@@ -458,7 +427,7 @@
             updateProgress(0);
 
             try {
-                showAlert('🔄 Analizando video...', 'info');
+                showAlert('🔄 Analizando video... (puede tardar 30s la primera vez)', 'info');
                 updateProgress(10);
 
                 // Llamar al API
@@ -522,13 +491,6 @@
                 document.getElementById('alert').style.display = 'none';
             });
         });
-
-        // Verificar si hay API_URL guardada
-        if (!API_URL) {
-            setTimeout(() => {
-                showAlert('⚙️ Configura tu servidor para comenzar', 'info');
-            }, 1000);
-        }
     </script>
 </body>
 </html>
