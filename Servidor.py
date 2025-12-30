@@ -5,6 +5,7 @@ import os
 import uuid
 import threading
 import time
+import subprocess
 from pathlib import Path
 
 app = Flask(__name__)
@@ -34,6 +35,17 @@ def cleanup_old_files():
 # Iniciar limpieza automática
 cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
 cleanup_thread.start()
+
+def has_ffmpeg():
+    """Verifica si FFmpeg está disponible"""
+    try:
+        result = subprocess.run(['ffmpeg', '-version'], 
+                              capture_output=True, 
+                              check=False,
+                              timeout=5)
+        return result.returncode == 0
+    except:
+        return False
 
 def progress_hook(d, download_id):
     """Hook para actualizar progreso"""
@@ -83,28 +95,19 @@ def download_media():
 
         # Configuración según tipo
         if media_type == 'audio':
+            # Sin FFmpeg, descarga el mejor audio disponible
             ydl_opts.update({
-                'format': 'bestaudio/best',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
             })
         else:
-            # SOLUCIÓN AL BUG: Forzar merge de video y audio
+            # Descarga video con audio incluido (sin merge)
             if quality == 'best':
-                format_str = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
+                format_str = 'best[ext=mp4]/best'
             else:
-                format_str = f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={quality}]+bestaudio/best[height<={quality}]'
+                format_str = f'best[height<={quality}][ext=mp4]/best[height<={quality}]'
             
             ydl_opts.update({
                 'format': format_str,
-                'merge_output_format': 'mp4',  # Forzar merge a MP4
-                'postprocessors': [{
-                    'key': 'FFmpegVideoConvertor',
-                    'preferedformat': 'mp4',  # Asegurar MP4 final
-                }],
             })
 
         # Descargar
@@ -204,4 +207,5 @@ def health():
 
 if __name__ == '__main__':
     # Para desarrollo local
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)
