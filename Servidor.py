@@ -3,9 +3,6 @@ from flask_cors import CORS
 import yt_dlp
 import os
 import uuid
-import threading
-import time
-import subprocess
 from pathlib import Path
 
 app = Flask(__name__)
@@ -15,57 +12,10 @@ CORS(app)
 DOWNLOAD_FOLDER = Path("downloads")
 DOWNLOAD_FOLDER.mkdir(exist_ok=True)
 
-# Almacenamiento de progreso (en memoria)
-download_progress = {}
-
-def cleanup_old_files():
-    """Limpia archivos antiguos cada hora"""
-    while True:
-        try:
-            current_time = time.time()
-            for file in DOWNLOAD_FOLDER.iterdir():
-                if file.is_file():
-                    file_age = current_time - file.stat().st_mtime
-                    if file_age > 3600:  # Más de 1 hora
-                        file.unlink()
-        except Exception as e:
-            print(f"Error limpiando archivos: {e}")
-        time.sleep(3600)  # Cada hora
-
-# Iniciar limpieza automática
-cleanup_thread = threading.Thread(target=cleanup_old_files, daemon=True)
-cleanup_thread.start()
-
-def has_ffmpeg():
-    """Verifica si FFmpeg está disponible"""
-    try:
-        result = subprocess.run(['ffmpeg', '-version'], 
-                              capture_output=True, 
-                              check=False,
-                              timeout=5)
-        return result.returncode == 0
-    except:
-        return False
-
-def progress_hook(d, download_id):
-    """Hook para actualizar progreso"""
-    if d['status'] == 'downloading':
-        try:
-            percent = d.get('_percent_str', '0%').strip().rstrip('%')
-            download_progress[download_id] = {
-                'status': 'downloading',
-                'percent': float(percent),
-                'speed': d.get('_speed_str', 'N/A'),
-                'eta': d.get('_eta_str', 'N/A')
-            }
-        except:
-            pass
-    elif d['status'] == 'finished':
-        download_progress[download_id] = {
-            'status': 'processing',
-            'percent': 100,
-            'message': 'Finalizando...'
-        }
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check"""
+    return jsonify({'status': 'healthy', 'service': 'Media Downloader API'})
 
 @app.route('/api/download', methods=['POST'])
 def download_media():
@@ -79,81 +29,46 @@ def download_media():
         if not url:
             return jsonify({'error': 'URL requerida'}), 400
 
-        # Generar ID único para esta descarga
+        # Generar ID único
         download_id = str(uuid.uuid4())
-        download_progress[download_id] = {'status': 'starting', 'percent': 0}
-
-        # Configurar yt-dlp
         output_template = str(DOWNLOAD_FOLDER / f"{download_id}.%(ext)s")
         
+        # Configurar yt-dlp
         ydl_opts = {
             'outtmpl': output_template,
-            'progress_hooks': [lambda d: progress_hook(d, download_id)],
-            'quiet': False,
-            'no_warnings': False,
+            'quiet': True,
+            'no_warnings': True,
         }
 
         # Configuración según tipo
         if media_type == 'audio':
-            # Sin FFmpeg, descarga el mejor audio disponible
-            ydl_opts.update({
-                'format': 'bestaudio[ext=m4a]/bestaudio/best',
-            })
+            ydl_opts['format'] = 'bestaudio[ext=m4a]/bestaudio/best'
         else:
-            # Descarga video con audio incluido (sin merge)
             if quality == 'best':
-                format_str = 'best[ext=mp4]/best'
+                ydl_opts['format'] = 'best[ext=mp4]/best'
             else:
-                format_str = f'best[height<={quality}][ext=mp4]/best[height<={quality}]'
-            
-            ydl_opts.update({
-                'format': format_str,
-            })
+                ydl_opts['format'] = f'best[height<={quality}][ext=mp4]/best[height<={quality}]'
 
         # Descargar
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             
-            # Obtener nombre del archivo descargado
-            if media_type == 'audio':
-                filename = f"{download_id}.mp3"
-            else:
-                filename = f"{download_id}.mp4"
+            # Buscar el archivo descargado
+            possible_files = list(DOWNLOAD_FOLDER.glob(f"{download_id}.*"))
+            if not possible_files:
+                return jsonify({'error': 'Archivo no encontrado'}), 500
             
-            filepath = DOWNLOAD_FOLDER / filename
-
-            # Verificar que el archivo existe
-            if not filepath.exists():
-                # Buscar el archivo con cualquier extensión
-                possible_files = list(DOWNLOAD_FOLDER.glob(f"{download_id}.*"))
-                if possible_files:
-                    filepath = possible_files[0]
-                else:
-                    return jsonify({'error': 'Archivo no encontrado después de descarga'}), 500
-
-            download_progress[download_id] = {
-                'status': 'completed',
-                'percent': 100,
-                'filename': filepath.name,
-                'title': info.get('title', 'download')
-            }
+            filepath = possible_files[0]
 
             return jsonify({
                 'success': True,
                 'download_id': download_id,
                 'filename': filepath.name,
                 'title': info.get('title', 'download'),
-                'message': '¡Descarga completada!'
             })
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@app.route('/api/progress/<download_id>', methods=['GET'])
-def get_progress(download_id):
-    """Obtener progreso de descarga"""
-    progress = download_progress.get(download_id, {'status': 'not_found'})
-    return jsonify(progress)
 
 @app.route('/api/file/<filename>', methods=['GET'])
 def get_file(filename):
@@ -161,51 +76,11 @@ def get_file(filename):
     try:
         filepath = DOWNLOAD_FOLDER / filename
         if filepath.exists():
-            return send_file(
-                filepath,
-                as_attachment=True,
-                download_name=filename
-            )
+            return send_file(filepath, as_attachment=True, download_name=filename)
         return jsonify({'error': 'Archivo no encontrado'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/info', methods=['POST'])
-def get_info():
-    """Obtener información del video sin descargar"""
-    try:
-        data = request.json
-        url = data.get('url')
-
-        if not url:
-            return jsonify({'error': 'URL requerida'}), 400
-
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            return jsonify({
-                'title': info.get('title'),
-                'duration': info.get('duration'),
-                'thumbnail': info.get('thumbnail'),
-                'uploader': info.get('uploader'),
-                'formats': len(info.get('formats', [])),
-            })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/health', methods=['GET'])
-def health():
-    """Health check"""
-    return jsonify({'status': 'healthy', 'service': 'Media Downloader API'})
-
 if __name__ == '__main__':
-    # Para desarrollo local
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=False, host='0.0.0.0', port=port)
